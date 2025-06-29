@@ -12,7 +12,7 @@ const inflateAsync = promisify(inflate);
 // ==================== COMPRESSION HANDLER ====================
 
 /**
- * Enhanced decompression function with better format detection
+ * Enhanced decompression function with better format detection and error handling
  */
 export async function decompressContent(
   buffer: Buffer | ArrayBuffer,
@@ -21,125 +21,166 @@ export async function decompressContent(
   // Ensure we're working with a Node.js Buffer
   const inputBuffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
   
+  // Log decompression attempt for debugging
+  logger.debug({
+    type: 'decompression',
+    contentEncoding,
+    bufferSize: inputBuffer.length,
+    firstBytes: inputBuffer.subarray(0, 8).toString('hex')
+  }, 'Attempting decompression');
+  
   // If no content-encoding header is provided, attempt to detect the format
   if (!contentEncoding) {
-    // Check for gzip magic bytes (0x1F 0x8B)
-    if (inputBuffer.length > 2 && inputBuffer[0] === 0x1F && inputBuffer[1] === 0x8B) {
-      try {
-        return await gunzipAsync(inputBuffer);
-      } catch (error) {
-        logger.error('Failed to decompress auto-detected gzip', error);
-      }
-    }
-    
-    // Check for zstd magic bytes (0x28 0xB5 0x2F 0xFD)
-    if (inputBuffer.length > 4 && 
-        inputBuffer[0] === 0x28 && 
-        inputBuffer[1] === 0xB5 && 
-        inputBuffer[2] === 0x2F && 
-        inputBuffer[3] === 0xFD) {
-      try {
-        const result = await fzstdDecompress(inputBuffer);
-        return Buffer.from(result);
-      } catch (error) {
-        logger.error('Failed to decompress auto-detected zstd', error);
-      }
-    }
-    
-    // Try brotli (no reliable magic bytes, but worth a try)
-    try {
-      const result = await brotliDecompressAsync(inputBuffer);
-      return result;
-    } catch (error) {
-      // Silently fail, this was just a guess
-    }
-    
-    // Try deflate (no reliable magic bytes, but worth a try)
-    try {
-      const result = await inflateAsync(inputBuffer);
-      return result;
-    } catch (error) {
-      // Silently fail, this was just a guess
-    }
-    
-    // If all auto-detection fails, return the original buffer
-    return inputBuffer;
+    return await autoDetectAndDecompress(inputBuffer);
   }
   
   // If content-encoding header is provided, use it
   const encoding = contentEncoding.toLowerCase().trim();
   
   try {
+    let result: Buffer;
+    
     switch (encoding) {
       case 'gzip':
-        return await gunzipAsync(inputBuffer);
+        result = await gunzipAsync(inputBuffer);
+        logger.debug({ type: 'decompression', method: 'gzip', success: true }, 'Gzip decompression successful');
+        break;
         
       case 'br':
-        return await brotliDecompressAsync(inputBuffer);
+        result = await brotliDecompressAsync(inputBuffer);
+        logger.debug({ type: 'decompression', method: 'brotli', success: true }, 'Brotli decompression successful');
+        break;
         
       case 'zstd':
         const decompressedZstdUint8Array = await fzstdDecompress(inputBuffer);
-        return Buffer.from(decompressedZstdUint8Array);
+        result = Buffer.from(decompressedZstdUint8Array);
+        logger.debug({ type: 'decompression', method: 'zstd', success: true }, 'Zstd decompression successful');
+        break;
         
       case 'deflate':
-        return await inflateAsync(inputBuffer);
+        result = await inflateAsync(inputBuffer);
+        logger.debug({ type: 'decompression', method: 'deflate', success: true }, 'Deflate decompression successful');
+        break;
         
       default:
-        logger.warn(`Unknown content-encoding header: '${encoding}'`);
-        
-        // Try all decompression methods even with an unknown encoding
-        try {
-          return await gunzipAsync(inputBuffer);
-        } catch (e) {}
-        
-        try {
-          return await brotliDecompressAsync(inputBuffer);
-        } catch (e) {}
-        
-        try {
-          const result = await fzstdDecompress(inputBuffer);
-          return Buffer.from(result);
-        } catch (e) {}
-        
-        try {
-          return await inflateAsync(inputBuffer);
-        } catch (e) {}
-        
-        // If nothing works, return the original buffer
-        return inputBuffer;
+        logger.warn({ type: 'decompression', encoding }, `Unknown content-encoding: ${encoding}, trying auto-detection`);
+        result = await autoDetectAndDecompress(inputBuffer);
     }
+    
+    return result;
   } catch (error) {
-    logger.error(`Error decompressing with '${encoding}':`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn({
+      type: 'decompression',
+      encoding,
+      error: errorMessage,
+      bufferSize: inputBuffer.length,
+      firstBytes: inputBuffer.subarray(0, 8).toString('hex')
+    }, `Decompression failed with ${encoding}, trying fallback methods`);
     
-    // Try alternative methods if the specified one fails
-    if (encoding !== 'gzip') {
-      try {
-        return await gunzipAsync(inputBuffer);
-      } catch (e) {}
-    }
-    
-    if (encoding !== 'br') {
-      try {
-        return await brotliDecompressAsync(inputBuffer);
-      } catch (e) {}
-    }
-    
-    if (encoding !== 'zstd') {
-      try {
-        const result = await fzstdDecompress(inputBuffer);
-        return Buffer.from(result);
-      } catch (e) {}
-    }
-    
-    if (encoding !== 'deflate') {
-      try {
-        return await inflateAsync(inputBuffer);
-      } catch (e) {}
-    }
-    
-    // If all decompression attempts fail, return the original content
-    return inputBuffer;
+    // Try fallback methods
+    return await fallbackDecompression(inputBuffer, encoding);
   }
+}
+
+/**
+ * Auto-detect compression format and decompress
+ */
+async function autoDetectAndDecompress(inputBuffer: Buffer): Promise<Buffer> {
+  // Check for gzip magic bytes (0x1F 0x8B)
+  if (inputBuffer.length > 2 && inputBuffer[0] === 0x1F && inputBuffer[1] === 0x8B) {
+    try {
+      const result = await gunzipAsync(inputBuffer);
+      logger.debug({ type: 'decompression', method: 'auto-gzip', success: true }, 'Auto-detected gzip decompression successful');
+      return result;
+    } catch (error) {
+      logger.debug({ type: 'decompression', method: 'auto-gzip', error: error instanceof Error ? error.message : String(error) }, 'Auto-detected gzip failed');
+    }
+  }
+  
+  // Check for zstd magic bytes (0x28 0xB5 0x2F 0xFD)
+  if (inputBuffer.length > 4 && 
+      inputBuffer[0] === 0x28 && 
+      inputBuffer[1] === 0xB5 && 
+      inputBuffer[2] === 0x2F && 
+      inputBuffer[3] === 0xFD) {
+    try {
+      const decompressed = await fzstdDecompress(inputBuffer);
+      const result = Buffer.from(decompressed);
+      logger.debug({ type: 'decompression', method: 'auto-zstd', success: true }, 'Auto-detected zstd decompression successful');
+      return result;
+    } catch (error) {
+      logger.debug({ type: 'decompression', method: 'auto-zstd', error: error instanceof Error ? error.message : String(error) }, 'Auto-detected zstd failed');
+    }
+  }
+  
+  // Try brotli (no reliable magic bytes, but worth a try)
+  try {
+    const result = await brotliDecompressAsync(inputBuffer);
+    logger.debug({ type: 'decompression', method: 'auto-brotli', success: true }, 'Auto-detected brotli decompression successful');
+    return result;
+  } catch (error) {
+    logger.debug({ type: 'decompression', method: 'auto-brotli', error: error instanceof Error ? error.message : String(error) }, 'Auto-detected brotli failed');
+  }
+  
+  // Try deflate (no reliable magic bytes, but worth a try)
+  try {
+    const result = await inflateAsync(inputBuffer);
+    logger.debug({ type: 'decompression', method: 'auto-deflate', success: true }, 'Auto-detected deflate decompression successful');
+    return result;
+  } catch (error) {
+    logger.debug({ type: 'decompression', method: 'auto-deflate', error: error instanceof Error ? error.message : String(error) }, 'Auto-detected deflate failed');
+  }
+  
+  // If all auto-detection fails, return the original buffer
+  logger.debug({ type: 'decompression', method: 'none', result: 'original' }, 'No compression detected, returning original buffer');
+  return inputBuffer;
+}
+
+/**
+ * Try alternative decompression methods when the specified one fails
+ */
+async function fallbackDecompression(inputBuffer: Buffer, failedEncoding: string): Promise<Buffer> {
+  const methods = [
+    { name: 'gzip', fn: gunzipAsync },
+    { name: 'brotli', fn: brotliDecompressAsync },
+    { name: 'deflate', fn: inflateAsync }
+  ];
+  
+  // Try zstd separately since it has different signature
+  if (failedEncoding !== 'zstd') {
+    try {
+      const decompressed = await fzstdDecompress(inputBuffer);
+      const result = Buffer.from(decompressed);
+      logger.debug({ type: 'decompression', method: 'fallback-zstd', success: true }, 'Fallback zstd decompression successful');
+      return result;
+    } catch (error) {
+      logger.debug({ type: 'decompression', method: 'fallback-zstd', error: error instanceof Error ? error.message : String(error) }, 'Fallback zstd failed');
+    }
+  }
+  
+  // Try other methods
+  for (const method of methods) {
+    if (method.name !== failedEncoding.replace('br', 'brotli')) {
+      try {
+        const result = await method.fn(inputBuffer);
+        logger.debug({ type: 'decompression', method: `fallback-${method.name}`, success: true }, `Fallback ${method.name} decompression successful`);
+        return result;
+      } catch (error) {
+        logger.debug({ type: 'decompression', method: `fallback-${method.name}`, error: error instanceof Error ? error.message : String(error) }, `Fallback ${method.name} failed`);
+      }
+    }
+  }
+  
+  // If all fallback methods fail, return the original buffer
+  logger.warn({
+    type: 'decompression',
+    originalEncoding: failedEncoding,
+    result: 'original',
+    bufferSize: inputBuffer.length
+  }, 'All decompression methods failed, returning original buffer');
+  
+  return inputBuffer;
 }
 
 // ==================== URL VALIDATOR ====================
@@ -256,32 +297,53 @@ export function detectTransportStream(buffer: ArrayBuffer | Buffer | Uint8Array)
     
     // Minimum size check
     if (data.length < 188) {
+      logger.debug({ type: 'ts-detection', size: data.length, reason: 'too-small' }, 'Buffer too small for TS detection');
       return false;
     }
     
     // Check first byte for TS sync byte (0x47)
     if (data[0] !== 0x47) {
+      logger.debug({ 
+        type: 'ts-detection', 
+        firstByte: data[0].toString(16), 
+        expected: '47',
+        reason: 'no-sync-byte'
+      }, 'No TS sync byte found');
       return false;
     }
     
     // Check additional TS sync bytes at 188-byte intervals
-    // Only need to find 1 additional sync byte to identify as TS
-    for (let i = 1; i <= 3; i++) {
+    let syncByteCount = 1; // We already found one
+    for (let i = 1; i <= 5; i++) { // Check more sync bytes for better accuracy
       const offset = i * 188;
       if (offset < data.length && data[offset] === 0x47) {
-        return true;
+        syncByteCount++;
       }
     }
     
-    return false;
+    // Require at least 2 sync bytes for positive detection
+    const isTransportStream = syncByteCount >= 2;
+    
+    logger.debug({
+      type: 'ts-detection',
+      size: data.length,
+      syncByteCount,
+      isTransportStream,
+      firstBytes: data.subarray(0, 8).toString('hex')
+    }, `TS detection result: ${isTransportStream ? 'POSITIVE' : 'NEGATIVE'}`);
+    
+    return isTransportStream;
   } catch (error) {
-    logger.error('Error detecting transport stream:', error);
+    logger.error({
+      type: 'ts-detection',
+      error: error instanceof Error ? error.message : String(error)
+    }, 'Error detecting transport stream');
     return false;
   }
 }
 
 /**
- * Analyze response data and determine if content type should be overridden
+ * Enhanced content type detection with better logging
  * 
  * @param buffer Response body as buffer
  * @param originalContentType Original content type from response
@@ -293,8 +355,17 @@ export function determineContentType(
   originalContentType: string | null | undefined,
   url: string
 ): string {
-  // If it's a transport stream, return video/mp2t regardless of original type
-  if (detectTransportStream(buffer)) {
+  // Check if it's a transport stream
+  const isTS = detectTransportStream(buffer);
+  
+  if (isTS) {
+    logger.info({
+      type: 'content-type-override',
+      url,
+      originalContentType: originalContentType || 'none',
+      newContentType: 'video/mp2t',
+      reason: 'transport-stream-detected'
+    }, 'Transport stream detected, overriding content type');
     return 'video/mp2t';
   }
   
@@ -302,11 +373,39 @@ export function determineContentType(
   if (url.toLowerCase().endsWith('.m3u8') &&
       (!originalContentType || 
        !originalContentType.includes('application/vnd.apple.mpegurl'))) {
+    logger.info({
+      type: 'content-type-override',
+      url,
+      originalContentType: originalContentType || 'none',
+      newContentType: 'application/vnd.apple.mpegurl',
+      reason: 'm3u8-extension'
+    }, 'M3U8 extension detected, overriding content type');
     return 'application/vnd.apple.mpegurl';
   }
   
+  // Special handling for segments with misleading extensions
+  const urlLower = url.toLowerCase();
+  if ((urlLower.includes('seg-') || urlLower.includes('segment-')) && 
+      (urlLower.endsWith('.js') || urlLower.endsWith('.jpg') || urlLower.endsWith('.png'))) {
+    // Check if this might be a disguised segment
+    logger.debug({
+      type: 'content-type-analysis',
+      url,
+      originalContentType: originalContentType || 'none',
+      reason: 'potential-disguised-segment'
+    }, 'Potential disguised segment detected');
+  }
+  
   // Return the original content type if it exists
-  return originalContentType || 'application/octet-stream';
+  const finalContentType = originalContentType || 'application/octet-stream';
+  
+  logger.debug({
+    type: 'content-type-final',
+    url,
+    contentType: finalContentType
+  }, 'Using original content type');
+  
+  return finalContentType;
 }
 
 // ==================== VTT HANDLER ====================

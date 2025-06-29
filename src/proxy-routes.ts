@@ -4,7 +4,7 @@ import { URL } from 'url';
 import { PROXY, ROUTES, SERVER } from './config/constants.js';
 import { logger } from './middleware.js';
 import { generateHeadersForUrl } from './config/domain-templates.js';
-import { isM3u8Playlist, getMimeType } from './config/mime-types.js';
+import { isM3u8Playlist, getMimeType, isDisguisedSegment, getStreamingContentType } from './config/mime-types.js';
 import { processM3u8Content } from './utils/m3u8-handler.js';
 import { 
   validateUrl, 
@@ -215,40 +215,55 @@ async function streamProxyRequest(req: Request, res: Response, url: string, head
       // For text-based formats that need processing but are compressed,
       // we need to decompress fully first
       const arrayBuffer = await response.arrayBuffer();
-      const buffer = await decompressWithWorker(Buffer.from(arrayBuffer), contentEncoding);
       
-      // Process content if needed
-      if (isM3u8Playlist(url)) {
-        const responseText = new TextDecoder('utf-8').decode(buffer);
-        const processedContent = processM3u8Content(responseText, {
-          proxyBaseUrl: ROUTES.PROXY_BASE,
-          targetUrl: url,
-          urlParamName: 'url',
-          preserveQueryParams: true,
-        });
+      try {
+        const buffer = await decompressWithWorker(Buffer.from(arrayBuffer), contentEncoding);
         
-        res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.removeHeader('content-encoding');
-        recordResponse(requestStartTime, true, arrayBuffer.byteLength, processedContent.length);
-        return res.send(processedContent);
-      } else if (contentType?.includes('text/vtt')) {
-        const responseText = new TextDecoder('utf-8').decode(buffer);
-        const processedContent = processVttContent(responseText, {
-          proxyBaseUrl: ROUTES.PROXY_BASE,
-          targetUrl: url,
-          urlParamName: 'url',
-        });
+        // Process content if needed
+        if (isM3u8Playlist(url)) {
+          const responseText = new TextDecoder('utf-8').decode(buffer);
+          const processedContent = processM3u8Content(responseText, {
+            proxyBaseUrl: ROUTES.PROXY_BASE,
+            targetUrl: url,
+            urlParamName: 'url',
+            preserveQueryParams: true,
+          });
+          
+          res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+          res.removeHeader('content-encoding');
+          recordResponse(requestStartTime, true, arrayBuffer.byteLength, processedContent.length);
+          return res.send(processedContent);
+        } else if (contentType?.includes('text/vtt')) {
+          const responseText = new TextDecoder('utf-8').decode(buffer);
+          const processedContent = processVttContent(responseText, {
+            proxyBaseUrl: ROUTES.PROXY_BASE,
+            targetUrl: url,
+            urlParamName: 'url',
+          });
+          
+          res.setHeader('Content-Type', 'text/vtt');
+          res.removeHeader('content-encoding');
+          recordResponse(requestStartTime, true, arrayBuffer.byteLength, processedContent.length);
+          return res.send(processedContent);
+        }
         
-        res.setHeader('Content-Type', 'text/vtt');
+        // If no special processing needed but still compressed
         res.removeHeader('content-encoding');
-        recordResponse(requestStartTime, true, arrayBuffer.byteLength, processedContent.length);
-        return res.send(processedContent);
+        recordResponse(requestStartTime, true, arrayBuffer.byteLength, buffer.length);
+        return res.send(buffer);
+      } catch (decompressionError) {
+        logger.warn({
+          type: 'stream-decompression-failed',
+          url,
+          contentEncoding,
+          error: decompressionError instanceof Error ? decompressionError.message : String(decompressionError)
+        }, 'Stream decompression failed, using original content');
+        
+        // Fall back to original content
+        res.removeHeader('content-encoding');
+        recordResponse(requestStartTime, true, arrayBuffer.byteLength, arrayBuffer.byteLength);
+        return res.send(Buffer.from(arrayBuffer));
       }
-      
-      // If no special processing needed but still compressed
-      res.removeHeader('content-encoding');
-      recordResponse(requestStartTime, true, arrayBuffer.byteLength, buffer.length);
-      return res.send(buffer);
     } 
     // Case 2: Uncompressed content that needs special processing (m3u8, vtt)
     else if (isM3u8Playlist(url) || contentType?.includes('text/vtt')) {
@@ -294,11 +309,26 @@ async function streamProxyRequest(req: Request, res: Response, url: string, head
       // For compressed content that doesn't need special processing,
       // we can't stream it directly as the client expects uncompressed
       const arrayBuffer = await response.arrayBuffer();
-      const buffer = await decompressWithWorker(Buffer.from(arrayBuffer), contentEncoding);
       
-      res.removeHeader('content-encoding');
-      recordResponse(requestStartTime, true, arrayBuffer.byteLength, buffer.length);
-      return res.send(buffer);
+      try {
+        const buffer = await decompressWithWorker(Buffer.from(arrayBuffer), contentEncoding);
+        
+        res.removeHeader('content-encoding');
+        recordResponse(requestStartTime, true, arrayBuffer.byteLength, buffer.length);
+        return res.send(buffer);
+      } catch (decompressionError) {
+        logger.warn({
+          type: 'stream-decompression-failed',
+          url,
+          contentEncoding,
+          error: decompressionError instanceof Error ? decompressionError.message : String(decompressionError)
+        }, 'Stream decompression failed, using original content');
+        
+        // Fall back to original content
+        res.removeHeader('content-encoding');
+        recordResponse(requestStartTime, true, arrayBuffer.byteLength, arrayBuffer.byteLength);
+        return res.send(Buffer.from(arrayBuffer));
+      }
     } 
     // Case 4: Uncompressed content that doesn't need special processing - direct streaming
     else if (response.body) {
@@ -408,10 +438,23 @@ async function streamProxyRequest(req: Request, res: Response, url: string, head
       const buffer = Buffer.from(arrayBuffer);
       
       if (contentEncoding) {
-        const decompressed = await decompressWithWorker(buffer, contentEncoding);
-        res.removeHeader('content-encoding');
-        recordResponse(requestStartTime, true, buffer.length, decompressed.length);
-        return res.send(decompressed);
+        try {
+          const decompressed = await decompressWithWorker(buffer, contentEncoding);
+          res.removeHeader('content-encoding');
+          recordResponse(requestStartTime, true, buffer.length, decompressed.length);
+          return res.send(decompressed);
+        } catch (decompressionError) {
+          logger.warn({
+            type: 'fallback-decompression-failed',
+            url,
+            contentEncoding,
+            error: decompressionError instanceof Error ? decompressionError.message : String(decompressionError)
+          }, 'Fallback decompression failed, using original content');
+          
+          // Use original content
+          recordResponse(requestStartTime, true, buffer.length, buffer.length);
+          return res.send(buffer);
+        }
       }
       
       recordResponse(requestStartTime, true, 0, buffer.length);
@@ -626,7 +669,8 @@ async function proxyRequest(req: Request, res: Response, next: NextFunction) {
          url.endsWith('.mp4') || 
          url.endsWith('.mp3') || 
          url.endsWith('.m4s') || 
-         url.includes('segment-'))) {
+         url.includes('segment-') ||
+         isDisguisedSegment(url))) {
       return streamProxyRequest(req, res, url, headers);
     }
     
@@ -858,11 +902,31 @@ async function proxyRequest(req: Request, res: Response, next: NextFunction) {
           // Get the content as a buffer first
           const responseBuffer = await response.arrayBuffer();
           
-          // Decompress content if needed
-          const decompressedBuffer = await decompressWithWorker(
-            Buffer.from(responseBuffer),
-            contentEncoding || undefined
-          );
+          // Decompress content if needed with improved error handling
+          let decompressedBuffer: Buffer;
+          try {
+            decompressedBuffer = await decompressWithWorker(
+              Buffer.from(responseBuffer),
+              contentEncoding || undefined
+            );
+            
+            logger.debug({
+              type: 'decompression-success',
+              url,
+              originalSize: responseBuffer.byteLength,
+              decompressedSize: decompressedBuffer.length,
+              contentEncoding
+            }, 'M3U8 content decompressed successfully');
+          } catch (decompressionError) {
+            logger.warn({
+              type: 'decompression-failed',
+              url,
+              contentEncoding,
+              error: decompressionError instanceof Error ? decompressionError.message : String(decompressionError)
+            }, 'M3U8 decompression failed, using original content');
+            
+            decompressedBuffer = Buffer.from(responseBuffer);
+          }
           
           // Convert buffer to string with UTF-8 encoding
           const responseText = new TextDecoder('utf-8').decode(decompressedBuffer);
@@ -940,10 +1004,15 @@ async function proxyRequest(req: Request, res: Response, next: NextFunction) {
             const buffer = await response.arrayBuffer();
             
             // Try to decompress content even on error
-            const decompressedBuffer = await decompressWithWorker(
-              Buffer.from(buffer),
-              contentEncoding || undefined
-            ).catch(() => Buffer.from(buffer));
+            let decompressedBuffer: Buffer;
+            try {
+              decompressedBuffer = await decompressWithWorker(
+                Buffer.from(buffer),
+                contentEncoding || undefined
+              );
+            } catch (e) {
+              decompressedBuffer = Buffer.from(buffer);
+            }
             
             res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
             // Don't forward the content-encoding, we've already decompressed
@@ -1008,22 +1077,72 @@ async function proxyRequest(req: Request, res: Response, next: NextFunction) {
           // Continue to the general content handling below
         }
       }
-      // Handle all other content types using a buffer-based approach
+      // Handle all other content types using enhanced buffer-based approach
       else if (response.body) {
         try {
           // Get the content as an ArrayBuffer
           const responseBuffer = await response.arrayBuffer();
           
-          // Decompress content if needed
-          const buffer = contentEncoding && !isAudioSegment
-            ? await decompressWithWorker(
+          logger.debug({
+            type: 'proxy-content',
+            url,
+            originalSize: responseBuffer.byteLength,
+            contentType,
+            contentEncoding,
+            hasContentEncoding: !!contentEncoding
+          }, 'Processing response content');
+          
+          // Handle decompression more carefully
+          let buffer: Buffer;
+          
+          if (contentEncoding && !isAudioSegment) {
+            try {
+              // Use the improved decompression with better error handling
+              buffer = await decompressWithWorker(
                 Buffer.from(responseBuffer),
                 contentEncoding
-              )
-            : Buffer.from(responseBuffer);
+              );
+              
+              logger.debug({
+                type: 'decompression-success',
+                url,
+                originalSize: responseBuffer.byteLength,
+                decompressedSize: buffer.length,
+                contentEncoding
+              }, 'Content decompressed successfully');
+            } catch (decompressionError) {
+              logger.warn({
+                type: 'decompression-failed',
+                url,
+                contentEncoding,
+                error: decompressionError instanceof Error ? decompressionError.message : String(decompressionError),
+                originalSize: responseBuffer.byteLength
+              }, 'Decompression failed, using original content');
+              
+              // Fall back to original content
+              buffer = Buffer.from(responseBuffer);
+            }
+          } else {
+            buffer = Buffer.from(responseBuffer);
+          }
           
-          // Perform binary analysis to detect actual content type
-          const detectedType = determineContentType(buffer, contentType, url);
+          // Enhanced content type detection
+          let detectedType: string;
+          
+          // First, check if this might be a disguised segment using URL analysis
+          if (isDisguisedSegment(url)) {
+            logger.info({
+              type: 'disguised-segment-detected',
+              url,
+              originalContentType: contentType || 'none',
+              detectedExtension: url.split('.').pop()
+            }, 'Disguised segment detected based on URL pattern');
+            
+            detectedType = 'video/mp2t';
+          } else {
+            // Use the enhanced content type detection
+            detectedType = determineContentType(buffer, contentType, url);
+          }
           
           // Set the appropriate content type
           if (detectedType && !isAudioSegment) {
@@ -1032,46 +1151,66 @@ async function proxyRequest(req: Request, res: Response, next: NextFunction) {
             // Log if we're overriding the content type
             if (detectedType !== contentType) {
               logger.info({
-                type: 'proxy',
+                type: 'content-type-override',
                 url,
                 originalContentType: contentType || 'none',
-                newContentType: detectedType
-              }, `Binary analysis: overriding content type for ${url}`);
+                newContentType: detectedType,
+                reason: isDisguisedSegment(url) ? 'disguised-segment' : 'binary-analysis'
+              }, `Content type overridden for ${url}`);
             }
           } else if (contentType) {
             res.setHeader('Content-Type', contentType);
           } else {
-            // Try to determine content type by extension
+            // Try to determine content type by extension as last resort
             const mimeType = getMimeType(url);
             if (mimeType) {
               res.setHeader('Content-Type', mimeType);
+              logger.debug({
+                type: 'content-type-fallback',
+                url,
+                mimeType
+              }, 'Using MIME type from file extension');
             }
           }
           
-          // Don't forward content-encoding header if we've decompressed the content
+          // Handle content-encoding header removal
           if (contentEncoding && !isAudioSegment) {
             res.removeHeader('content-encoding');
+            logger.debug({
+              type: 'header-removal',
+              url,
+              removedHeader: 'content-encoding',
+              originalValue: contentEncoding
+            }, 'Removed content-encoding header after decompression');
           }
           
           // Set status code
           res.status(response.status);
           
+          // Log final result
           logger.debug({
-            type: 'proxy',
+            type: 'proxy-success',
             url,
             status: response.status,
-            contentType: res.getHeader('Content-Type'),
+            finalContentType: res.getHeader('Content-Type'),
             responseTime: Date.now() - startTime,
-            size: buffer.byteLength,
-            decompressed: !!contentEncoding && !isAudioSegment
-          }, `Proxied content for ${url}`);
+            finalSize: buffer.byteLength,
+            wasDecompressed: !!contentEncoding && !isAudioSegment
+          }, `Successfully proxied content for ${url}`);
           
-          // Add to cache for successful GET requests
+          // Add to cache for successful GET requests (avoid caching failed decompressions)
           if (req.method === 'GET' && response.status === 200 && !req.headers.range) {
-            // Skip caching for very large responses
+            // Only cache if we successfully processed the content
             if (buffer.byteLength <= 10 * 1024 * 1024) { // Only cache up to 10MB
               const cacheKey = generateCacheKey(url, req.headers);
               setCacheItem(cacheKey, buffer, buffer.byteLength);
+              
+              logger.debug({
+                type: 'cache-store',
+                url,
+                size: buffer.byteLength,
+                cacheKey: cacheKey.substring(0, 50) + '...'
+              }, 'Content added to cache');
             }
           }
           
@@ -1081,9 +1220,10 @@ async function proxyRequest(req: Request, res: Response, next: NextFunction) {
           return res.send(Buffer.from(buffer));
         } catch (error) {
           logger.error({
-            type: 'proxy',
+            type: 'proxy-content-error',
             url,
             error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined
           }, 'Error processing response content');
           
           recordResponse(requestStartTime, false, requestSize, 0);
@@ -1206,6 +1346,50 @@ router.post('/metrics/reset', (req, res) => {
     message: 'Performance metrics reset successfully',
     timestamp: new Date().toISOString(),
   });
+});
+
+// Debug endpoint to analyze content without proxying
+router.get('/debug', async (req, res) => {
+  const url = req.query.url as string;
+  
+  if (!url) {
+    return res.status(400).json({ error: 'URL parameter required' });
+  }
+  
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD', // Just get headers
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0'
+      }
+    });
+    
+    const headers = Object.fromEntries(response.headers.entries());
+    
+    const analysis = {
+      url,
+      status: response.status,
+      headers,
+      contentType: headers['content-type'],
+      contentEncoding: headers['content-encoding'],
+      contentLength: headers['content-length'],
+      
+      // URL analysis
+      urlAnalysis: {
+        extension: url.split('.').pop(),
+        isDisguisedSegment: isDisguisedSegment(url),
+        suggestedContentType: getStreamingContentType(url),
+        hasSegmentPattern: /seg-\d+|segment-\d+/i.test(url),
+        hasVersionPattern: /-v\d+-a\d+/i.test(url)
+      }
+    };
+    
+    res.json(analysis);
+  } catch (error) {
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : String(error) 
+    });
+  }
 });
 
 // Main proxy route with URL as query parameter

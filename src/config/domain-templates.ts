@@ -1,22 +1,24 @@
-/**
- * Domain-specific header templates for various streaming services
- * This allows for targeted anti-hotlinking bypass based on the domain
- */
-
 import { URL } from 'url';
 
 export interface DomainTemplate {
-  // Domain pattern (can be exact or wildcard with *)
   pattern: string | RegExp;
-  // Headers to set for this domain
   headers: Record<string, string>;
-  // Optional function to further customize headers based on URL
   headersFn?: (url: URL) => Record<string, string>;
 }
 
-/**
- * Predefined header templates for known domains
- */
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/114.0.0.0 Safari/537.36',
+];
+
+function getRandomUserAgent(): string {
+  return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
+const headerCache = new Map<string, Record<string, string>>();
+
 export const domainTemplates: DomainTemplate[] = [
   // Padorupado.ru
      
@@ -264,7 +266,7 @@ export const domainTemplates: DomainTemplate[] = [
 
   // ultimatetechinnovation.xyz
   {
-    pattern: /raffaellocdn\.net$/i,
+    pattern: /\.raffaellocdn\.net$/i,
     headers: {
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
       'accept': '*/*',
@@ -275,15 +277,52 @@ export const domainTemplates: DomainTemplate[] = [
     },
     headersFn: (url: URL) => {
       return {
-        'origin': 'https://kerolaunochan.online',
-        'referer': 'https://kerolaunochan.online/',
+        'origin': 'https://streameeeeee.site',
+        'referer': 'https://streameeeeee.site/',
       };
     }
   },
   
+  {
+    pattern: /b-g-eu-1\.raffaellocdn\.net$/i,
+    headers: {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; rv:130.0) Gecko/20100101 Firefox/130.0',
+      'accept': '*/*',
+      'accept-language': 'en-US,en;q=0.5',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'cross-site',
+    },
+    headersFn: (url: URL) => {
+      return {
+        'origin': 'https://streameeeeee.site',
+        'referer': 'https://streameeeeee.site/',
+      };
+    }
+  },
+
   // dewbreeze84.online
   {
     pattern: /dewbreeze84\.online$/i,
+    headers: {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+      'accept': '*/*',
+      'accept-language': 'en-US,en;q=0.5',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'cross-site',
+    },
+    headersFn: (url: URL) => {
+      return {
+        'origin': 'https://megacloud.blog',
+        'referer': 'https://megacloud.blog/',
+      };
+    }
+  },
+
+    // douvid.xyz
+  {
+    pattern: /douvid\.xyz$/i,
     headers: {
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
       'accept': '*/*',
@@ -452,6 +491,139 @@ export const domainTemplates: DomainTemplate[] = [
       }
     },
 
+        // eb.netmagcdn.com
+    {
+      pattern: /\.shadowlandschronicles\.com$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://cloudnestra.com',
+          'referer': 'https://cloudnestra.com/',
+        };
+      }
+    },
+
+    // boldsageventures.xyz
+    {
+      pattern: /boldsageventures\.xyz$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://cloudnestra.com',
+          'referer': 'https://cloudnestra.com/',
+        };
+      }
+    },
+
+    // putgate.org
+    {
+      pattern: /putgate\.org$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://cloudnestra.com',
+          'referer': 'https://cloudnestra.com/',
+        };
+      }
+    },
+    
+    // southboat.site
+    {
+      pattern: /\.southboat\.site$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://player.videasy.net',
+          'referer': 'https://player.videasy.net/',
+        };
+      }
+    },  
+
+    // cdnup.cc
+    {
+      pattern: /\.cdnup\.cc$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://bestwish.lol',
+          'referer': 'https://bestwish.lol/',
+        };
+      }
+    },  
+
+    // streamupcdn.com
+    {
+      pattern: /\.streamupcdn\.com$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://bestwish.lol',
+          'referer': 'https://bestwish.lol/',
+        };
+      }
+    },
+
+    // eb.netmagcdn.com
+    {
+      pattern: /\.netmagcdn\.com$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://megacloud.club',
+          'referer': 'https://megacloud.club/',
+        };
+      }
+    },
+
     // mistyvalley31.live
     {
       pattern: /cloudburst82\.xyz$/i,
@@ -566,6 +738,24 @@ export const domainTemplates: DomainTemplate[] = [
       }
     },
 
+    // .xelvonwave64.xyz
+    {
+      pattern: /\.xelvonwave64\.xyz$/i,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0',
+        'accept': '*/*',
+        'accept-language': 'en-US,en;q=0.5',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'cross-site',
+      },
+      headersFn: (url: URL) => {
+        return {
+          'origin': 'https://vidsrc.su',
+          'referer': 'https://vidsrc.su/',
+        };
+      }
+    },
 
     // lightningbolt.site
     {
@@ -1191,53 +1381,49 @@ export const domainTemplates: DomainTemplate[] = [
   }
 ];
 
-/**
- * Find the appropriate template for a given URL
- * @param url URL object to match against templates
- * @returns The matching domain template
- */
 export function findTemplateForDomain(url: URL): DomainTemplate {
   const hostname = url.hostname;
-  
+
   for (const template of domainTemplates) {
     if (typeof template.pattern === 'string') {
-      // String pattern could be exact or with wildcard (*)
       const pattern = template.pattern.replace(/\*/g, '.*');
       if (new RegExp(pattern).test(hostname)) {
         return template;
       }
     } else if (template.pattern.test(hostname)) {
-      // RegExp pattern
       return template;
     }
   }
-  
-  // Return the last template (general default) if no match
+
   return domainTemplates[domainTemplates.length - 1];
 }
 
-/**
- * Generate headers for a specific URL based on templates
- * @param url URL to generate headers for
- * @returns Headers for the URL
- */
 export function generateHeadersForUrl(url: URL): Record<string, string> {
-  const template = findTemplateForDomain(url);
-  
-  // Start with template headers
-  const headers = { ...template.headers };
-  
-  // Apply custom header function if available
-  if (template.headersFn) {
-    const customHeaders = template.headersFn(url);
-    Object.assign(headers, customHeaders);
+  const cacheKey = url.hostname;
+
+  if (headerCache.has(cacheKey)) {
+    return { ...headerCache.get(cacheKey)! };
   }
-  
+
+  const template = findTemplateForDomain(url);
+  const headers: Record<string, string> = {
+    ...template.headers,
+    'user-agent': getRandomUserAgent(), // override static UA
+  };
+
+  if (template.headersFn) {
+    Object.assign(headers, template.headersFn(url));
+  }
+
+  delete headers['cache-control'];
+  delete headers['pragma'];
+
+  headerCache.set(cacheKey, headers);
   return headers;
 }
 
 export default {
   domainTemplates,
   findTemplateForDomain,
-  generateHeadersForUrl
+  generateHeadersForUrl,
 };

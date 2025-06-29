@@ -97,7 +97,30 @@ export const COMMON_MIME_TYPES = {
   ];
   
   /**
-   * Gets MIME type from file extension
+   * Enhanced segment detection patterns
+   * These help identify streaming segments that might be disguised with wrong extensions
+   */
+  export const SEGMENT_PATTERNS = [
+    // Common segment naming patterns
+    /seg-\d+/i,
+    /segment-\d+/i,
+    /chunk-\d+/i,
+    /frag-\d+/i,
+    /part-\d+/i,
+    
+    // HLS-style patterns
+    /-v\d+-a\d+/i,
+    /-f\d+-v\d+-a\d+/i,
+    
+    // Other common patterns
+    /media-\d+/i,
+    /stream_\d+/i,
+    /_\d+\.ts$/i,
+    /_\d+\.m4s$/i,
+  ];
+  
+  /**
+   * Gets MIME type from file extension with enhanced segment detection
    * @param path File path or URL
    * @returns MIME type string or undefined if not recognized
    */
@@ -108,7 +131,12 @@ export const COMMON_MIME_TYPES = {
     const extension = path.split('.').pop()?.toLowerCase();
     if (!extension) return undefined;
     
-    // Special case for jpg files that are actually TS segments (like in your m3u8 example)
+    // Check if this looks like a disguised segment
+    if (isDisguisedSegment(path)) {
+      return 'video/mp2t';
+    }
+    
+    // Special case for jpg files that are actually TS segments (original logic)
     if (extension === 'jpg' && path.includes('segment-') && path.includes('-v1-a1')) {
       return 'video/mp2t';
     }
@@ -116,6 +144,25 @@ export const COMMON_MIME_TYPES = {
     // Check in streaming formats first, then common MIME types
     return STREAMING_FORMATS[extension as keyof typeof STREAMING_FORMATS] || 
            COMMON_MIME_TYPES[extension as keyof typeof COMMON_MIME_TYPES];
+  }
+  
+  /**
+   * Enhanced detection for disguised segments
+   * @param path File path or URL
+   * @returns Boolean indicating if this might be a disguised segment
+   */
+  export function isDisguisedSegment(path: string): boolean {
+    if (!path) return false;
+    
+    const pathLower = path.toLowerCase();
+    
+    // Check for segment patterns with wrong extensions
+    const hasSegmentPattern = SEGMENT_PATTERNS.some(pattern => pattern.test(path));
+    const hasSuspiciousExtension = ['.js', '.jpg', '.png', '.gif', '.css', '.html'].some(ext => 
+      pathLower.endsWith(ext)
+    );
+    
+    return hasSegmentPattern && hasSuspiciousExtension;
   }
   
   /**
@@ -128,6 +175,11 @@ export const COMMON_MIME_TYPES = {
     
     const extension = path.split('.').pop()?.toLowerCase();
     if (!extension) return false;
+    
+    // Check for disguised segments
+    if (isDisguisedSegment(path)) {
+      return true;
+    }
     
     // Special case for jpg files that are actually TS segments
     if (extension === 'jpg' && path.includes('segment-') && path.includes('-v1-a1')) {
@@ -148,7 +200,7 @@ export const COMMON_MIME_TYPES = {
   }
   
   /**
-   * Determines if a path is specifically a TS segment (mp2t)
+   * Enhanced TS segment detection
    * @param path File path or URL
    * @returns Boolean indicating if it's a TS file
    */
@@ -163,7 +215,12 @@ export const COMMON_MIME_TYPES = {
       return true;
     }
     
-    // Special case for jpg files that are actually TS segments
+    // Check for disguised segments
+    if (isDisguisedSegment(path)) {
+      return true;
+    }
+    
+    // Special case for jpg files that are actually TS segments (original logic)
     if (path.toLowerCase().endsWith('.jpg') && 
         path.includes('segment-') && 
         path.includes('-v1-a1')) {
@@ -183,16 +240,49 @@ export const COMMON_MIME_TYPES = {
     
     return M3U8_REWRITABLE_EXTENSIONS.some(ext => 
       url.toLowerCase().endsWith(ext)
-    );
+    ) || isDisguisedSegment(url);
+  }
+  
+  /**
+   * Get content type based on segment analysis
+   * This function provides more intelligent content type detection for streaming content
+   * @param path File path or URL
+   * @param fallback Fallback content type
+   * @returns Best guess content type
+   */
+  export function getStreamingContentType(path: string, fallback?: string): string {
+    if (!path) return fallback || 'application/octet-stream';
+    
+    // Check if it's an M3U8 playlist
+    if (isM3u8Playlist(path)) {
+      return 'application/vnd.apple.mpegurl';
+    }
+    
+    // Check if it's a TS segment (including disguised ones)
+    if (isTsSegment(path)) {
+      return 'video/mp2t';
+    }
+    
+    // Check for other streaming formats
+    if (isStreamingFormat(path)) {
+      const mimeType = getMimeType(path);
+      if (mimeType) return mimeType;
+    }
+    
+    // Fall back to standard MIME type detection
+    return getMimeType(path) || fallback || 'application/octet-stream';
   }
   
   export default {
     COMMON_MIME_TYPES,
     STREAMING_FORMATS,
     M3U8_REWRITABLE_EXTENSIONS,
+    SEGMENT_PATTERNS,
     getMimeType,
     isStreamingFormat,
     isM3u8Playlist,
     isTsSegment,
-    needsM3u8Rewriting
+    needsM3u8Rewriting,
+    isDisguisedSegment,
+    getStreamingContentType
   };
